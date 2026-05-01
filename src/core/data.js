@@ -1,12 +1,18 @@
 /**
  * Core data access logic.
  */
-import { evaluate, evaluateAsync, KNOWN_PATHS, safeString } from '../connection.js';
+import { evaluate, evaluateAsync, getClient, KNOWN_PATHS, safeString } from '../connection.js';
+import { existsSync, readdirSync, readFileSync, statSync } from 'fs';
+import { join } from 'path';
+import { homedir } from 'os';
 
 const MAX_OHLCV_BARS = 500;
 const MAX_TRADES = 20;
 const CHART_API = KNOWN_PATHS.chartApi;
 const BARS_PATH = KNOWN_PATHS.mainSeriesBars;
+const DEFAULT_DOWNLOAD_TIMEOUT = 30000;
+const DEFAULT_DOWNLOAD_POLL = 500;
+const DEFAULT_PREVIEW_ROWS = 3;
 
 function buildGraphicsJS(collectionName, mapKey, filter) {
   return `
@@ -57,6 +63,275 @@ function buildGraphicsJS(collectionName, mapKey, filter) {
       return results;
     })()
   `;
+}
+
+function sleep(ms) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+function parseCsvLine(line) {
+  const values = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    const next = line[i + 1];
+
+    if (ch === '"') {
+      if (inQuotes && next === '"') {
+        current += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (ch === ',' && !inQuotes) {
+      values.push(current);
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+
+  values.push(current);
+  return values;
+}
+
+function makePreviewColumns(columns) {
+  const counts = new Map();
+  return columns.map(column => {
+    const count = (counts.get(column) || 0) + 1;
+    counts.set(column, count);
+    return count === 1 ? column : `${column} #${count}`;
+  });
+}
+
+export function summarizeCsvFile(filePath, { preview_rows } = {}) {
+  const text = readFileSync(filePath, 'utf8').replace(/^\uFEFF/, '');
+  const lines = text.split(/\r?\n/).filter(line => line.length > 0);
+  if (lines.length === 0) {
+    return {
+      success: true,
+      file_path: filePath,
+      size_bytes: statSync(filePath).size,
+      row_count: 0,
+      column_count: 0,
+      columns: [],
+      preview_columns: [],
+      preview_rows: [],
+    };
+  }
+
+  const columns = parseCsvLine(lines[0]);
+  const previewColumns = makePreviewColumns(columns);
+  const limit = Math.max(0, preview_rows ?? DEFAULT_PREVIEW_ROWS);
+  const previewRows = lines.slice(1, 1 + limit).map(line => {
+    const values = parseCsvLine(line);
+    const row = {};
+    previewColumns.forEach((column, index) => {
+      row[column] = values[index] ?? '';
+    });
+    return row;
+  });
+
+  return {
+    success: true,
+    file_path: filePath,
+    size_bytes: statSync(filePath).size,
+    row_count: Math.max(0, lines.length - 1),
+    column_count: columns.length,
+    columns,
+    preview_columns: previewColumns,
+    preview_rows: previewRows,
+  };
+}
+
+function listCsvDownloads(downloadsDir, sinceMs) {
+  if (!existsSync(downloadsDir)) return [];
+
+  return readdirSync(downloadsDir)
+    .filter(name => name.toLowerCase().endsWith('.csv'))
+    .map(name => {
+      const filePath = join(downloadsDir, name);
+      const stat = statSync(filePath);
+      return { filePath, name, mtimeMs: stat.mtimeMs, size: stat.size };
+    })
+    .filter(file => file.mtimeMs >= sinceMs)
+    .sort((a, b) => b.mtimeMs - a.mtimeMs);
+}
+
+async function waitForDownloadedCsv({ downloadsDir, sinceMs, timeoutMs, pollMs }) {
+  const start = Date.now();
+  let candidate = null;
+  let stableSize = -1;
+  let stableCount = 0;
+
+  while (Date.now() - start < timeoutMs) {
+    const files = listCsvDownloads(downloadsDir, sinceMs);
+    if (files.length > 0) {
+      const latest = files[0];
+      if (!candidate || candidate.filePath !== latest.filePath || stableSize !== latest.size) {
+        candidate = latest;
+        stableSize = latest.size;
+        stableCount = 0;
+      } else {
+        stableCount++;
+      }
+
+      if (stableCount >= 1 && latest.size > 0) {
+        return latest.filePath;
+      }
+    }
+
+    await sleep(pollMs);
+  }
+
+  throw new Error(`Timed out waiting for chart data CSV in ${downloadsDir}`);
+}
+
+async function mouseClickAt(x, y) {
+  const client = await getClient();
+  await client.Input.dispatchMouseEvent({ type: 'mouseMoved', x, y });
+  await client.Input.dispatchMouseEvent({ type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1 });
+  await client.Input.dispatchMouseEvent({ type: 'mouseReleased', x, y, button: 'left' });
+}
+
+function findElementCenterJS(kind) {
+  if (kind === 'manage-layouts') {
+    return `
+      (function() {
+        function isVisible(el) {
+          var r = el.getBoundingClientRect();
+          return r.width > 0 && r.height > 0;
+        }
+        var el = document.querySelector('[data-name="save-load-menu"]');
+        if (!el || !isVisible(el)) {
+          var candidates = document.querySelectorAll('[aria-label="Manage layouts"]');
+          var best = null;
+          for (var i = 0; i < candidates.length; i++) {
+            var candidate = candidates[i];
+            if (!isVisible(candidate)) continue;
+            var r = candidate.getBoundingClientRect();
+            if (!best || r.x > best.r.x) best = { el: candidate, r: r };
+          }
+          if (best) el = best.el;
+        }
+        if (!el || !isVisible(el)) return null;
+        var r = el.getBoundingClientRect();
+        return {
+          x: r.x + r.width / 2,
+          y: r.y + r.height / 2,
+          text: (el.textContent || el.innerText || '').replace(/\\s+/g, ' ').trim(),
+          aria: el.getAttribute('aria-label') || '',
+          dataName: el.getAttribute('data-name') || ''
+        };
+      })()
+    `;
+  }
+
+  const predicate = kind === 'download-menu-item'
+    ? `
+      if (aria === 'Download chart data' || text === 'Download chart data…' || text === 'Download chart data...') {
+        return true;
+      }
+    `
+    : `
+      if (text === 'Download') {
+        var ancestor = el;
+        for (var depth = 0; depth < 8 && ancestor; depth++, ancestor = ancestor.parentElement) {
+          var ancestorText = norm(ancestor.textContent || ancestor.innerText || '');
+          if (ancestorText.indexOf('Download chart data') !== -1) return true;
+        }
+      }
+    `;
+
+  return `
+    (function() {
+      function isVisible(el) {
+        var r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      }
+      function norm(s) {
+        return (s || '').replace(/\\s+/g, ' ').trim();
+      }
+      var els = document.querySelectorAll('[aria-label], [data-name], button, [role="button"], [role="menuitem"], div, span');
+      for (var i = 0; i < els.length; i++) {
+        var el = els[i];
+        if (!isVisible(el)) continue;
+        var r = el.getBoundingClientRect();
+        var text = norm(el.textContent || el.innerText || '');
+        var aria = norm(el.getAttribute('aria-label') || '');
+        var dataName = norm(el.getAttribute('data-name') || '');
+        ${predicate}
+      }
+      return null;
+    })()
+  `.replace(/return true;/g, `return { x: r.x + r.width / 2, y: r.y + r.height / 2, text: text, aria: aria, dataName: dataName };`);
+}
+
+async function clickDownloadChartDataMenuItem() {
+  const existing = await evaluate(findElementCenterJS('download-menu-item'));
+  if (existing) {
+    await mouseClickAt(existing.x, existing.y);
+    return { clicked: true, source: 'menu_item', ...existing };
+  }
+
+  const menu = await evaluate(findElementCenterJS('manage-layouts'));
+  if (!menu) throw new Error('Manage layouts button not found');
+  await mouseClickAt(menu.x, menu.y);
+
+  for (let i = 0; i < 20; i++) {
+    await sleep(100);
+    const item = await evaluate(findElementCenterJS('download-menu-item'));
+    if (item) {
+      await mouseClickAt(item.x, item.y);
+      return { clicked: true, source: 'opened_manage_layouts', ...item };
+    }
+  }
+
+  throw new Error('Download chart data menu item did not appear after opening Manage layouts');
+}
+
+async function clickDialogDownloadButton() {
+  for (let i = 0; i < 30; i++) {
+    await sleep(100);
+    const button = await evaluate(findElementCenterJS('dialog-download-button'));
+    if (button) {
+      await mouseClickAt(button.x, button.y);
+      return { clicked: true, ...button };
+    }
+  }
+
+  throw new Error('Download button did not appear in chart data dialog');
+}
+
+export async function downloadChartData({
+  downloads_dir,
+  timeout_ms,
+  poll_ms,
+  preview_rows,
+} = {}) {
+  const downloadsDir = downloads_dir || join(homedir(), 'Downloads');
+  const timeoutMs = timeout_ms || DEFAULT_DOWNLOAD_TIMEOUT;
+  const pollMs = poll_ms || DEFAULT_DOWNLOAD_POLL;
+  const sinceMs = Date.now() - 1000;
+
+  await clickDownloadChartDataMenuItem();
+  await clickDialogDownloadButton();
+
+  const filePath = await waitForDownloadedCsv({
+    downloadsDir,
+    sinceMs,
+    timeoutMs,
+    pollMs,
+  });
+
+  const summary = summarizeCsvFile(filePath, { preview_rows });
+  return {
+    ...summary,
+    downloads_dir: downloadsDir,
+    source: 'tradingview_download_chart_data_ui',
+  };
 }
 
 export async function getOhlcv({ count, summary } = {}) {

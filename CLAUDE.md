@@ -1,6 +1,6 @@
 # TradingView MCP — Claude Instructions
 
-68 tools for reading and controlling a live TradingView Desktop chart via CDP (port 9222).
+79 tools for reading and controlling a live TradingView Desktop chart via CDP (port 9222).
 
 ## Decision Tree — Which Tool When
 
@@ -23,6 +23,7 @@ Use `study_filter` parameter to target a specific indicator by name substring (e
 - `data_get_ohlcv` with `summary: true` → compact stats (high, low, range, change%, avg volume, last 5 bars)
 - `data_get_ohlcv` without summary → all bars (use `count` to limit, default 100)
 - `quote_get` → single latest price snapshot
+- `chart_download_data` → use TradingView's built-in Download chart data dialog and return a CSV file path + summary, including available indicator columns
 
 ### "Analyze my chart" (full report workflow)
 1. `quote_get` → current price
@@ -32,6 +33,10 @@ Use `study_filter` parameter to target a specific indicator by name substring (e
 5. `data_get_pine_tables` → session stats, analytics tables
 6. `data_get_ohlcv` with `summary: true` → price action summary
 7. `capture_screenshot` → visual confirmation
+
+### "Export/download chart data"
+- `chart_download_data` → preferred when the user wants TradingView's official chart data CSV, especially indicator columns from visible studies
+- Use the returned `file_path` for local CSV parsing; do not paste large CSV contents into chat unless the user asks for a small excerpt
 
 ### "Change the chart"
 - `chart_set_symbol` → switch ticker (e.g., "AAPL", "ES1!", "NYMEX:CL1!")
@@ -96,6 +101,7 @@ These tools can return large payloads. Follow these rules to avoid context bloat
 6. **Use `capture_screenshot`** for visual context instead of pulling large datasets — a screenshot is ~300KB but gives you the full visual picture
 7. **Call `chart_get_state` once** at the start to get entity IDs, then reference them — don't re-call repeatedly
 8. **Cap your OHLCV requests** — `count: 20` for quick analysis, `count: 100` for deeper work, `count: 500` only when specifically needed
+9. **Use `chart_download_data` for full CSV exports** when indicator columns matter; summarize the CSV instead of dumping it
 
 ### Output Size Estimates (compact mode)
 | Tool | Typical Output |
@@ -108,6 +114,7 @@ These tools can return large payloads. Follow these rules to avoid context bloat
 | `data_get_pine_boxes` | ~1-2 KB per study (deduplicated zones) |
 | `data_get_ohlcv` (summary) | ~500 bytes |
 | `data_get_ohlcv` (100 bars) | ~8 KB |
+| `chart_download_data` | ~2-10 KB summary, CSV saved to Downloads |
 | `capture_screenshot` | ~300 bytes (returns file path, not image data) |
 
 ## Tool Conventions
