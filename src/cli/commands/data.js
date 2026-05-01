@@ -32,11 +32,13 @@ register('data', {
         dir: { type: 'string', short: 'd', description: 'Download directory to watch (default ~/Downloads)' },
         timeout: { type: 'string', short: 't', description: 'Timeout in milliseconds (default 30000)' },
         preview: { type: 'string', short: 'p', description: 'Preview rows to return (default 3)' },
+        mouse: { type: 'boolean', description: 'Skip background DOM click attempt and use CDP mouse events only' },
       },
       handler: (opts) => core.downloadChartData({
         downloads_dir: opts.dir,
         timeout_ms: opts.timeout ? Number(opts.timeout) : undefined,
         preview_rows: opts.preview ? Number(opts.preview) : undefined,
+        background_attempt: !opts.mouse,
       }),
     }],
     ['lines', {

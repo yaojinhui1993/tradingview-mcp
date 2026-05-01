@@ -154,6 +154,7 @@ tv quote                           # current price
 tv symbol AAPL                     # change symbol
 tv ohlcv --summary                 # price summary
 tv data download                   # download chart data CSV with indicator columns
+tv data download --mouse           # force TradingView's native mouse/download path
 tv screenshot -r chart             # capture chart
 tv pine compile                    # compile Pine Script
 tv pane layout 2x2                 # 4-chart grid
@@ -226,7 +227,7 @@ Claude reads [`CLAUDE.md`](CLAUDE.md) automatically when working in this project
 | `data_get_study_values` | Read current RSI, MACD, BB, EMA values from all indicators | ~500B |
 | `quote_get` | Get latest price, OHLC, volume | ~200B |
 | `data_get_ohlcv` | Get price bars. **Use `summary: true`** for compact stats | 500B (summary) / 8KB (100 bars) |
-| `chart_download_data` | Use TradingView's Download chart data dialog to save CSV with symbol + indicator columns | File path + summary; CSV on disk |
+| `chart_download_data` | Use TradingView's Download chart data dialog to generate CSV with symbol + indicator columns. Captures the CSV Blob in the background when possible, then falls back to native download/mouse events | File path + summary; CSV on disk |
 
 ### Custom Indicator Data (Pine Drawings)
 

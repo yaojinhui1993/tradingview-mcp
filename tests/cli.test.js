@@ -78,6 +78,12 @@ describe('CLI — help and routing', () => {
     assert.ok(stdout.includes('--count'));
     assert.ok(stdout.includes('--summary'));
   });
+
+  it('data download --help shows background fallback option', () => {
+    const { stdout, exitCode } = run(['data', 'download', '--help']);
+    assert.equal(exitCode, 0);
+    assert.ok(stdout.includes('--mouse'));
+  });
 });
 
 describe('CLI — pine analyze (offline)', () => {

@@ -7,8 +7,9 @@ export function registerDataTools(server) {
     downloads_dir: z.string().optional().describe('Download directory to watch (default: ~/Downloads)'),
     timeout_ms: z.coerce.number().optional().describe('How long to wait for the CSV download in milliseconds (default 30000)'),
     preview_rows: z.coerce.number().optional().describe('Number of CSV data rows to include in the response preview (default 3)'),
-  }, async ({ downloads_dir, timeout_ms, preview_rows }) => {
-    try { return jsonResult(await core.downloadChartData({ downloads_dir, timeout_ms, preview_rows })); }
+    background_attempt: z.boolean().optional().describe('Try DOM clicks plus CSV Blob capture first to avoid bringing TradingView to the foreground (default true). Falls back to native download/mouse events if needed.'),
+  }, async ({ downloads_dir, timeout_ms, preview_rows, background_attempt }) => {
+    try { return jsonResult(await core.downloadChartData({ downloads_dir, timeout_ms, preview_rows, background_attempt })); }
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 

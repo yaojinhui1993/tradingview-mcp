@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { summarizeCsvFile } from '../src/core/data.js';
+import { normalizeDownloadOptions, sanitizeDownloadFilename, summarizeCsvFile } from '../src/core/data.js';
 
 describe('chart data CSV summary', () => {
   it('summarizes columns, row count, and preview rows', () => {
@@ -66,5 +66,26 @@ describe('chart data CSV summary', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('chart data download options', () => {
+  it('tries background DOM clicks by default', () => {
+    assert.equal(normalizeDownloadOptions({}).background_attempt, true);
+  });
+
+  it('allows callers to force the mouse-only path', () => {
+    assert.equal(normalizeDownloadOptions({ background_attempt: false }).background_attempt, false);
+  });
+});
+
+describe('chart data captured download filenames', () => {
+  it('sanitizes TradingView CSV names before writing them locally', () => {
+    assert.equal(sanitizeDownloadFilename('BATS:NVDA, 5.csv'), 'BATS_NVDA, 5.csv');
+    assert.equal(sanitizeDownloadFilename('../chart.csv'), '.._chart.csv');
+  });
+
+  it('falls back to a generated CSV name when TradingView does not provide one', () => {
+    assert.match(sanitizeDownloadFilename(''), /^tradingview_chart_data_\d+\.csv$/);
   });
 });

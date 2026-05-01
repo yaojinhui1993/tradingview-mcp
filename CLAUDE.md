@@ -23,7 +23,7 @@ Use `study_filter` parameter to target a specific indicator by name substring (e
 - `data_get_ohlcv` with `summary: true` → compact stats (high, low, range, change%, avg volume, last 5 bars)
 - `data_get_ohlcv` without summary → all bars (use `count` to limit, default 100)
 - `quote_get` → single latest price snapshot
-- `chart_download_data` → use TradingView's built-in Download chart data dialog and return a CSV file path + summary, including available indicator columns
+- `chart_download_data` → use TradingView's built-in Download chart data dialog and return a CSV file path + summary, including available indicator columns. It tries background DOM clicks plus CSV Blob capture first, then falls back to native download/mouse events.
 
 ### "Analyze my chart" (full report workflow)
 1. `quote_get` → current price
@@ -36,6 +36,7 @@ Use `study_filter` parameter to target a specific indicator by name substring (e
 
 ### "Export/download chart data"
 - `chart_download_data` → preferred when the user wants TradingView's official chart data CSV, especially indicator columns from visible studies
+- Pass `background_attempt: false` only when you need the older native mouse/download path.
 - Use the returned `file_path` for local CSV parsing; do not paste large CSV contents into chat unless the user asks for a small excerpt
 
 ### "Change the chart"

@@ -2,7 +2,7 @@
  * Core data access logic.
  */
 import { evaluate, evaluateAsync, getClient, KNOWN_PATHS, safeString } from '../connection.js';
-import { existsSync, readdirSync, readFileSync, statSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 
@@ -13,6 +13,7 @@ const BARS_PATH = KNOWN_PATHS.mainSeriesBars;
 const DEFAULT_DOWNLOAD_TIMEOUT = 30000;
 const DEFAULT_DOWNLOAD_POLL = 500;
 const DEFAULT_PREVIEW_ROWS = 3;
+const BACKGROUND_DOWNLOAD_WAIT = 5000;
 
 function buildGraphicsJS(collectionName, mapKey, filter) {
   return `
@@ -146,6 +147,46 @@ export function summarizeCsvFile(filePath, { preview_rows } = {}) {
   };
 }
 
+export function normalizeDownloadOptions({ background_attempt } = {}) {
+  return {
+    background_attempt: background_attempt !== false,
+  };
+}
+
+export function sanitizeDownloadFilename(filename) {
+  const cleaned = String(filename || '')
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
+    .trim();
+  const fallback = `tradingview_chart_data_${Date.now()}.csv`;
+  const safeName = cleaned || fallback;
+  return safeName.toLowerCase().endsWith('.csv') ? safeName : `${safeName}.csv`;
+}
+
+function uniqueCsvPath(downloadsDir, filename) {
+  const safeName = sanitizeDownloadFilename(filename);
+  const dot = safeName.toLowerCase().endsWith('.csv') ? safeName.length - 4 : safeName.length;
+  const base = safeName.slice(0, dot);
+  const ext = safeName.slice(dot) || '.csv';
+  let candidate = join(downloadsDir, safeName);
+
+  if (!existsSync(candidate)) return candidate;
+
+  for (let i = 0; i < 100; i++) {
+    const suffix = `${Date.now().toString(36)}_${i}`;
+    candidate = join(downloadsDir, `${base}_${suffix}${ext}`);
+    if (!existsSync(candidate)) return candidate;
+  }
+
+  throw new Error(`Could not create a unique CSV filename in ${downloadsDir}`);
+}
+
+function writeCapturedCsv({ downloadsDir, filename, text }) {
+  mkdirSync(downloadsDir, { recursive: true });
+  const filePath = uniqueCsvPath(downloadsDir, filename);
+  writeFileSync(filePath, text, 'utf8');
+  return filePath;
+}
+
 function listCsvDownloads(downloadsDir, sinceMs) {
   if (!existsSync(downloadsDir)) return [];
 
@@ -194,6 +235,205 @@ async function mouseClickAt(x, y) {
   await client.Input.dispatchMouseEvent({ type: 'mouseMoved', x, y });
   await client.Input.dispatchMouseEvent({ type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1 });
   await client.Input.dispatchMouseEvent({ type: 'mouseReleased', x, y, button: 'left' });
+}
+
+function domClickElementJS(kind) {
+  return `
+    (function() {
+      var kind = ${safeString(kind)};
+      function norm(s) {
+        return (s || '').replace(/\\s+/g, ' ').trim();
+      }
+      function isVisible(el) {
+        if (!el) return false;
+        var r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      }
+      function describe(el, method) {
+        var r = el.getBoundingClientRect();
+        return {
+          x: r.x + r.width / 2,
+          y: r.y + r.height / 2,
+          text: norm(el.textContent || el.innerText || ''),
+          aria: norm(el.getAttribute('aria-label') || ''),
+          dataName: norm(el.getAttribute('data-name') || ''),
+          tag: el.tagName,
+          method: method
+        };
+      }
+      function findManageLayouts() {
+        var el = document.querySelector('[data-name="save-load-menu"]');
+        if (el && isVisible(el)) return el;
+        var candidates = document.querySelectorAll('[aria-label="Manage layouts"]');
+        var best = null;
+        for (var i = 0; i < candidates.length; i++) {
+          var candidate = candidates[i];
+          if (!isVisible(candidate)) continue;
+          var r = candidate.getBoundingClientRect();
+          if (!best || r.x > best.r.x) best = { el: candidate, r: r };
+        }
+        return best ? best.el : null;
+      }
+      function matchesKind(el) {
+        var text = norm(el.textContent || el.innerText || '');
+        var aria = norm(el.getAttribute('aria-label') || '');
+        if (kind === 'download-menu-item') {
+          return aria === 'Download chart data' || text === 'Download chart data…' || text === 'Download chart data...';
+        }
+        if (kind === 'dialog-download-button' && text === 'Download') {
+          var ancestor = el;
+          for (var depth = 0; depth < 8 && ancestor; depth++, ancestor = ancestor.parentElement) {
+            var ancestorText = norm(ancestor.textContent || ancestor.innerText || '');
+            if (ancestorText.indexOf('Download chart data') !== -1) return true;
+          }
+        }
+        return false;
+      }
+      function findGeneric() {
+        if (kind === 'download-menu-item') {
+          var menuItems = document.querySelectorAll('[aria-label="Download chart data"]');
+          for (var m = 0; m < menuItems.length; m++) {
+            if (isVisible(menuItems[m])) return menuItems[m];
+          }
+        }
+        var els = document.querySelectorAll('[aria-label], [data-name], button, [role="button"], [role="menuitem"], div, span');
+        for (var i = 0; i < els.length; i++) {
+          var el = els[i];
+          if (!isVisible(el)) continue;
+          if (matchesKind(el)) return el;
+        }
+        return null;
+      }
+      function clickableTarget(el) {
+        if (!el) return null;
+        return el.closest('button,[role="button"],[role="menuitem"],[role="row"],[data-name]') || el;
+      }
+      function fireClick(el) {
+        var target = clickableTarget(el);
+        if (!target || !isVisible(target)) return null;
+        try { target.scrollIntoView({ block: 'center', inline: 'center' }); } catch (e) {}
+        var details = describe(target, 'dom');
+        var r = target.getBoundingClientRect();
+        var x = r.x + r.width / 2;
+        var y = r.y + r.height / 2;
+        var opts = {
+          bubbles: true,
+          cancelable: true,
+          view: window,
+          clientX: x,
+          clientY: y,
+          screenX: x,
+          screenY: y,
+          button: 0,
+          buttons: 1
+        };
+        var events = ['pointerover', 'mouseover', 'pointermove', 'mousemove', 'pointerdown', 'mousedown', 'pointerup', 'mouseup'];
+        for (var i = 0; i < events.length; i++) {
+          var type = events[i];
+          var Ctor = type.indexOf('pointer') === 0 && typeof PointerEvent !== 'undefined' ? PointerEvent : MouseEvent;
+          try { target.dispatchEvent(new Ctor(type, opts)); } catch (e) {}
+        }
+        if (typeof target.click === 'function') {
+          try { target.click(); } catch (e) {}
+        }
+        return details;
+      }
+
+      var el = kind === 'manage-layouts' ? findManageLayouts() : findGeneric();
+      return el ? fireClick(el) : null;
+    })()
+  `;
+}
+
+async function domClickElement(kind) {
+  return evaluate(domClickElementJS(kind));
+}
+
+function installDownloadCaptureJS() {
+  return `
+    (function() {
+      if (!window.__tvMcpDownloadCaptureOriginals) {
+        window.__tvMcpDownloadCaptureOriginals = {
+          createObjectURL: URL.createObjectURL.bind(URL),
+          anchorClick: HTMLAnchorElement.prototype.click
+        };
+
+        URL.createObjectURL = function(obj) {
+          var url = window.__tvMcpDownloadCaptureOriginals.createObjectURL(obj);
+          try {
+            if (obj && typeof obj.text === 'function') {
+              window.__tvMcpDownloadCapture.records.push({
+                url: url,
+                blob: obj,
+                type: obj.type || '',
+                size: obj.size || 0,
+                filename: '',
+                clicked: false
+              });
+            }
+          } catch (e) {}
+          return url;
+        };
+
+        HTMLAnchorElement.prototype.click = function() {
+          try {
+            var state = window.__tvMcpDownloadCapture;
+            var records = state && state.records || [];
+            for (var i = records.length - 1; i >= 0; i--) {
+              var rec = records[i];
+              if (rec.url === this.href && this.download) {
+                rec.filename = this.download;
+                rec.clicked = true;
+                return;
+              }
+            }
+          } catch (e) {}
+          return window.__tvMcpDownloadCaptureOriginals.anchorClick.apply(this, arguments);
+        };
+      }
+
+      window.__tvMcpDownloadCapture = { records: [] };
+      return true;
+    })()
+  `;
+}
+
+function restoreDownloadCaptureJS() {
+  return `
+    (function() {
+      var originals = window.__tvMcpDownloadCaptureOriginals;
+      if (!originals) return false;
+      URL.createObjectURL = originals.createObjectURL;
+      HTMLAnchorElement.prototype.click = originals.anchorClick;
+      delete window.__tvMcpDownloadCaptureOriginals;
+      delete window.__tvMcpDownloadCapture;
+      return true;
+    })()
+  `;
+}
+
+function readCapturedDownloadJS() {
+  return `
+    (async function() {
+      var records = window.__tvMcpDownloadCapture && window.__tvMcpDownloadCapture.records || [];
+      var rec = null;
+      for (var i = records.length - 1; i >= 0; i--) {
+        if (records[i].blob && typeof records[i].blob.text === 'function') {
+          rec = records[i];
+          break;
+        }
+      }
+      if (!rec) return null;
+      var text = await rec.blob.text();
+      return {
+        filename: rec.filename || 'tradingview_chart_data.csv',
+        clicked: !!rec.clicked,
+        size: rec.size || text.length,
+        type: rec.type || '',
+        text: text
+      };
+    })()
+  `;
 }
 
 function findElementCenterJS(kind) {
@@ -269,11 +509,11 @@ function findElementCenterJS(kind) {
   `.replace(/return true;/g, `return { x: r.x + r.width / 2, y: r.y + r.height / 2, text: text, aria: aria, dataName: dataName };`);
 }
 
-async function clickDownloadChartDataMenuItem() {
+async function mouseClickDownloadChartDataMenuItem() {
   const existing = await evaluate(findElementCenterJS('download-menu-item'));
   if (existing) {
     await mouseClickAt(existing.x, existing.y);
-    return { clicked: true, source: 'menu_item', ...existing };
+    return { clicked: true, method: 'mouse', source: 'menu_item', ...existing };
   }
 
   const menu = await evaluate(findElementCenterJS('manage-layouts'));
@@ -285,24 +525,170 @@ async function clickDownloadChartDataMenuItem() {
     const item = await evaluate(findElementCenterJS('download-menu-item'));
     if (item) {
       await mouseClickAt(item.x, item.y);
-      return { clicked: true, source: 'opened_manage_layouts', ...item };
+      return { clicked: true, method: 'mouse', source: 'opened_manage_layouts', ...item };
     }
   }
 
   throw new Error('Download chart data menu item did not appear after opening Manage layouts');
 }
 
-async function clickDialogDownloadButton() {
+async function mouseClickDialogDownloadButton() {
   for (let i = 0; i < 30; i++) {
     await sleep(100);
     const button = await evaluate(findElementCenterJS('dialog-download-button'));
     if (button) {
       await mouseClickAt(button.x, button.y);
-      return { clicked: true, ...button };
+      return { clicked: true, method: 'mouse', ...button };
     }
   }
 
   throw new Error('Download button did not appear in chart data dialog');
+}
+
+async function backgroundClickDownloadChartDataMenuItem() {
+  const existing = await domClickElement('download-menu-item');
+  if (existing) return { clicked: true, source: 'menu_item', ...existing };
+
+  const menu = await domClickElement('manage-layouts');
+  if (!menu) throw new Error('Manage layouts button not found');
+
+  for (let i = 0; i < 20; i++) {
+    await sleep(100);
+    const item = await domClickElement('download-menu-item');
+    if (item) {
+      return { clicked: true, source: 'opened_manage_layouts', menu, ...item };
+    }
+  }
+
+  throw new Error('Download chart data menu item did not appear after background Manage layouts click');
+}
+
+async function backgroundClickDialogDownloadButton() {
+  for (let i = 0; i < 30; i++) {
+    await sleep(100);
+    const button = await domClickElement('dialog-download-button');
+    if (button) return { clicked: true, ...button };
+  }
+
+  throw new Error('Download button did not appear after background chart data menu click');
+}
+
+async function mouseDownloadFromCurrentState() {
+  const visibleDialogButton = await evaluate(findElementCenterJS('dialog-download-button'));
+  if (visibleDialogButton) {
+    const dialog = await mouseClickDialogDownloadButton();
+    return {
+      click_strategy: 'mouse',
+      clicks: { dialog },
+    };
+  }
+
+  const menu = await mouseClickDownloadChartDataMenuItem();
+  const dialog = await mouseClickDialogDownloadButton();
+  return {
+    click_strategy: 'mouse',
+    clicks: { menu, dialog },
+  };
+}
+
+async function backgroundDownloadFromCurrentState() {
+  const menu = await backgroundClickDownloadChartDataMenuItem();
+  const dialog = await backgroundClickDialogDownloadButton();
+  return {
+    click_strategy: 'background',
+    clicks: { menu, dialog },
+  };
+}
+
+async function captureBackgroundDownload({ downloadsDir }) {
+  await evaluate(installDownloadCaptureJS());
+  try {
+    const clickResult = await backgroundDownloadFromCurrentState();
+
+    for (let i = 0; i < 30; i++) {
+      const captured = await evaluateAsync(readCapturedDownloadJS());
+      if (captured?.text) {
+        const filePath = writeCapturedCsv({
+          downloadsDir,
+          filename: captured.filename,
+          text: captured.text,
+        });
+        return {
+          filePath,
+          clickResult: {
+            ...clickResult,
+            click_strategy: 'background_capture',
+            background_attempted: true,
+            fallback_used: false,
+            download_method: 'captured_blob',
+            captured_filename: captured.filename,
+            captured_size: captured.size,
+            captured_type: captured.type,
+            captured_anchor_clicked: captured.clicked,
+          },
+        };
+      }
+      await sleep(100);
+    }
+
+    throw new Error('No captured CSV Blob after background download click');
+  } finally {
+    try { await evaluate(restoreDownloadCaptureJS()); } catch {}
+  }
+}
+
+async function clickDownloadChartData({ background_attempt }) {
+  if (background_attempt) {
+    try {
+      return {
+        ...(await backgroundDownloadFromCurrentState()),
+        background_attempted: true,
+        fallback_used: false,
+      };
+    } catch (err) {
+      return {
+        ...(await mouseDownloadFromCurrentState()),
+        background_attempted: true,
+        fallback_used: true,
+        background_error: err.message,
+      };
+    }
+  }
+
+  return {
+    ...(await mouseDownloadFromCurrentState()),
+    background_attempted: false,
+    fallback_used: false,
+  };
+}
+
+async function waitForNativeCsvAfterClick({ clickResult, downloadsDir, timeoutMs, pollMs }) {
+  const sinceMs = Date.now() - 1000;
+  try {
+    return await waitForDownloadedCsv({
+      downloadsDir,
+      sinceMs,
+      timeoutMs: clickResult.click_strategy === 'background' ? Math.min(timeoutMs, BACKGROUND_DOWNLOAD_WAIT) : timeoutMs,
+      pollMs,
+    });
+  } catch (err) {
+    if (clickResult.click_strategy !== 'background') throw err;
+    const fallbackSinceMs = Date.now() - 1000;
+    const fallbackClick = await mouseDownloadFromCurrentState();
+    const filePath = await waitForDownloadedCsv({
+      downloadsDir,
+      sinceMs: fallbackSinceMs,
+      timeoutMs,
+      pollMs,
+    });
+    Object.assign(clickResult, {
+      ...fallbackClick,
+      background_attempted: true,
+      fallback_used: true,
+      background_error: err.message,
+    });
+    return filePath;
+  }
 }
 
 export async function downloadChartData({
@@ -310,26 +696,43 @@ export async function downloadChartData({
   timeout_ms,
   poll_ms,
   preview_rows,
+  background_attempt,
 } = {}) {
+  const options = normalizeDownloadOptions({ background_attempt });
   const downloadsDir = downloads_dir || join(homedir(), 'Downloads');
   const timeoutMs = timeout_ms || DEFAULT_DOWNLOAD_TIMEOUT;
   const pollMs = poll_ms || DEFAULT_DOWNLOAD_POLL;
-  const sinceMs = Date.now() - 1000;
 
-  await clickDownloadChartDataMenuItem();
-  await clickDialogDownloadButton();
+  let filePath = null;
+  let clickResult = null;
+  let captureError = null;
 
-  const filePath = await waitForDownloadedCsv({
-    downloadsDir,
-    sinceMs,
-    timeoutMs,
-    pollMs,
-  });
+  if (options.background_attempt) {
+    try {
+      const captured = await captureBackgroundDownload({ downloadsDir });
+      filePath = captured.filePath;
+      clickResult = captured.clickResult;
+    } catch (err) {
+      captureError = err;
+    }
+  }
+
+  if (!filePath) {
+    clickResult = await clickDownloadChartData(options);
+    if (captureError) clickResult.capture_error = captureError.message;
+    filePath = await waitForNativeCsvAfterClick({
+      clickResult,
+      downloadsDir,
+      timeoutMs,
+      pollMs,
+    });
+  }
 
   const summary = summarizeCsvFile(filePath, { preview_rows });
   return {
     ...summary,
     downloads_dir: downloadsDir,
+    ...clickResult,
     source: 'tradingview_download_chart_data_ui',
   };
 }
