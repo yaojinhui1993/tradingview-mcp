@@ -131,8 +131,7 @@ export async function run(argv) {
 async function execute(handler, values, positionals) {
   try {
     const result = await handler(values, positionals);
-    console.log(JSON.stringify(result, null, 2));
-    process.exit(0);
+    writeStdoutAndExit(JSON.stringify(result) + '\n', 0);
   } catch (err) {
     handleError(err);
   }
@@ -142,9 +141,16 @@ function handleError(err) {
   const message = err.message || String(err);
   // Connection failures get exit code 2
   if (/CDP|connection|ECONNREFUSED|not running/i.test(message)) {
-    console.error(JSON.stringify({ success: false, error: message }, null, 2));
-    process.exit(2);
+    writeStderrAndExit(JSON.stringify({ success: false, error: message }) + '\n', 2);
+    return;
   }
-  console.error(JSON.stringify({ success: false, error: message }, null, 2));
-  process.exit(1);
+  writeStderrAndExit(JSON.stringify({ success: false, error: message }) + '\n', 1);
+}
+
+function writeStdoutAndExit(text, code) {
+  process.stdout.write(text, () => process.exit(code));
+}
+
+function writeStderrAndExit(text, code) {
+  process.stderr.write(text, () => process.exit(code));
 }

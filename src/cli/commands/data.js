@@ -9,7 +9,7 @@ register('quote', {
 register('ohlcv', {
   description: 'Get OHLCV bar data',
   options: {
-    count: { type: 'string', short: 'n', description: 'Number of bars (default 100, max 500)' },
+    count: { type: 'string', short: 'n', description: 'Number of bars (default 100, max 10000)' },
     summary: { type: 'boolean', short: 's', description: 'Return summary stats instead of all bars' },
   },
   handler: (opts) => core.getOhlcv({
@@ -24,8 +24,23 @@ register('values', {
 });
 
 register('data', {
-  description: 'Advanced data tools (lines, labels, tables, boxes, strategy, trades, equity, depth)',
+  description: 'Advanced data tools (download, lines, labels, tables, boxes, strategy, trades, equity, depth)',
   subcommands: new Map([
+    ['download', {
+      description: 'Download current chart data CSV via TradingView UI',
+      options: {
+        dir: { type: 'string', short: 'd', description: 'Download directory to watch (default ~/Downloads)' },
+        timeout: { type: 'string', short: 't', description: 'Timeout in milliseconds (default 30000)' },
+        preview: { type: 'string', short: 'p', description: 'Preview rows to return (default 3)' },
+        mouse: { type: 'boolean', description: 'Skip background DOM click attempt and use CDP mouse events only' },
+      },
+      handler: (opts) => core.downloadChartData({
+        downloads_dir: opts.dir,
+        timeout_ms: opts.timeout ? Number(opts.timeout) : undefined,
+        preview_rows: opts.preview ? Number(opts.preview) : undefined,
+        background_attempt: !opts.mouse,
+      }),
+    }],
     ['lines', {
       description: 'Get Pine Script line.new() price levels',
       options: {

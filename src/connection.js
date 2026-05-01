@@ -1,4 +1,7 @@
 import CDP from 'chrome-remote-interface';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 let client = null;
 let targetInfo = null;
@@ -6,6 +9,7 @@ const CDP_HOST = 'localhost';
 const CDP_PORT = 9222;
 const MAX_RETRIES = 5;
 const BASE_DELAY = 500;
+export const ACTIVE_TARGET_FILE = path.join(os.tmpdir(), 'tradingview-mcp-active-target.json');
 
 // Known direct API paths discovered via live probing (see PROBE_RESULTS.md)
 const KNOWN_PATHS = {
@@ -90,10 +94,61 @@ export async function connect() {
 async function findChartTarget() {
   const resp = await fetch(`http://${CDP_HOST}:${CDP_PORT}/json/list`);
   const targets = await resp.json();
+
+  const requestedTarget = findRequestedChartTarget(targets);
+  if (requestedTarget) {
+    return requestedTarget;
+  }
+
+  const rememberedTarget = findRememberedChartTarget(targets);
+  if (rememberedTarget) {
+    return rememberedTarget;
+  }
+
   // Prefer targets with tradingview.com/chart in the URL
   return targets.find(t => t.type === 'page' && /tradingview\.com\/chart/i.test(t.url))
     || targets.find(t => t.type === 'page' && /tradingview/i.test(t.url))
     || null;
+}
+
+function findRequestedChartTarget(targets) {
+  const requestedId = process.env.TRADINGVIEW_MCP_TARGET_ID;
+  if (!requestedId) {
+    return null;
+  }
+
+  const target = targets.find(t => t.id === requestedId);
+  if (!target) {
+    throw new Error(`TradingView target id not found: ${requestedId}`);
+  }
+
+  if (target.type !== 'page' || !/tradingview\.com\/chart/i.test(target.url)) {
+    throw new Error(`TradingView target id is not a chart tab: ${requestedId}`);
+  }
+
+  return target;
+}
+
+function findRememberedChartTarget(targets) {
+  try {
+    if (!fs.existsSync(ACTIVE_TARGET_FILE)) {
+      return null;
+    }
+
+    const remembered = JSON.parse(fs.readFileSync(ACTIVE_TARGET_FILE, 'utf8'));
+    const id = remembered && remembered.id;
+    if (!id) {
+      return null;
+    }
+
+    return targets.find(t => (
+      t.id === id
+      && t.type === 'page'
+      && /tradingview\.com\/chart/i.test(t.url)
+    )) || null;
+  } catch {
+    return null;
+  }
 }
 
 export async function getTargetInfo() {
