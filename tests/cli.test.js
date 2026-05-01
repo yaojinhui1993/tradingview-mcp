@@ -83,6 +83,7 @@ describe('CLI — help and routing', () => {
     const { stdout, exitCode } = run(['data', 'download', '--help']);
     assert.equal(exitCode, 0);
     assert.ok(stdout.includes('--mouse'));
+    assert.ok(stdout.includes('--filename'));
   });
 });
 

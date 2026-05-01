@@ -36,6 +36,7 @@ Use `study_filter` parameter to target a specific indicator by name substring (e
 
 ### "Export/download chart data"
 - `chart_download_data` → preferred when the user wants TradingView's official chart data CSV, especially indicator columns from visible studies
+- Use `downloads_dir` and `filename` when the user wants a predictable output location/name.
 - Pass `background_attempt: false` only when you need the older native mouse/download path.
 - Use the returned `file_path` for local CSV parsing; do not paste large CSV contents into chat unless the user asks for a small excerpt
 

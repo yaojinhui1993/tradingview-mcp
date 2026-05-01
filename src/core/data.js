@@ -2,7 +2,7 @@
  * Core data access logic.
  */
 import { evaluate, evaluateAsync, getClient, KNOWN_PATHS, safeString } from '../connection.js';
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 
@@ -162,6 +162,10 @@ export function sanitizeDownloadFilename(filename) {
   return safeName.toLowerCase().endsWith('.csv') ? safeName : `${safeName}.csv`;
 }
 
+export function resolveDownloadFilename({ filename, fallback } = {}) {
+  return sanitizeDownloadFilename(filename || fallback);
+}
+
 function uniqueCsvPath(downloadsDir, filename) {
   const safeName = sanitizeDownloadFilename(filename);
   const dot = safeName.toLowerCase().endsWith('.csv') ? safeName.length - 4 : safeName.length;
@@ -180,11 +184,20 @@ function uniqueCsvPath(downloadsDir, filename) {
   throw new Error(`Could not create a unique CSV filename in ${downloadsDir}`);
 }
 
-function writeCapturedCsv({ downloadsDir, filename, text }) {
+function writeCapturedCsv({ downloadsDir, filename, fallbackFilename, text }) {
   mkdirSync(downloadsDir, { recursive: true });
-  const filePath = uniqueCsvPath(downloadsDir, filename);
+  const safeName = resolveDownloadFilename({ filename, fallback: fallbackFilename });
+  const filePath = filename ? join(downloadsDir, safeName) : uniqueCsvPath(downloadsDir, safeName);
   writeFileSync(filePath, text, 'utf8');
   return filePath;
+}
+
+function renameDownloadedCsv({ filePath, downloadsDir, filename }) {
+  if (!filename) return filePath;
+  mkdirSync(downloadsDir, { recursive: true });
+  const targetPath = join(downloadsDir, resolveDownloadFilename({ filename }));
+  if (filePath !== targetPath) renameSync(filePath, targetPath);
+  return targetPath;
 }
 
 function listCsvDownloads(downloadsDir, sinceMs) {
@@ -600,7 +613,7 @@ async function backgroundDownloadFromCurrentState() {
   };
 }
 
-async function captureBackgroundDownload({ downloadsDir }) {
+async function captureBackgroundDownload({ downloadsDir, filename }) {
   await evaluate(installDownloadCaptureJS());
   try {
     const clickResult = await backgroundDownloadFromCurrentState();
@@ -610,7 +623,8 @@ async function captureBackgroundDownload({ downloadsDir }) {
       if (captured?.text) {
         const filePath = writeCapturedCsv({
           downloadsDir,
-          filename: captured.filename,
+          filename,
+          fallbackFilename: captured.filename,
           text: captured.text,
         });
         return {
@@ -697,6 +711,7 @@ export async function downloadChartData({
   poll_ms,
   preview_rows,
   background_attempt,
+  filename,
 } = {}) {
   const options = normalizeDownloadOptions({ background_attempt });
   const downloadsDir = downloads_dir || join(homedir(), 'Downloads');
@@ -709,7 +724,7 @@ export async function downloadChartData({
 
   if (options.background_attempt) {
     try {
-      const captured = await captureBackgroundDownload({ downloadsDir });
+      const captured = await captureBackgroundDownload({ downloadsDir, filename });
       filePath = captured.filePath;
       clickResult = captured.clickResult;
     } catch (err) {
@@ -726,6 +741,7 @@ export async function downloadChartData({
       timeoutMs,
       pollMs,
     });
+    filePath = renameDownloadedCsv({ filePath, downloadsDir, filename });
   }
 
   const summary = summarizeCsvFile(filePath, { preview_rows });

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { normalizeDownloadOptions, sanitizeDownloadFilename, summarizeCsvFile } from '../src/core/data.js';
+import { normalizeDownloadOptions, resolveDownloadFilename, sanitizeDownloadFilename, summarizeCsvFile } from '../src/core/data.js';
 
 describe('chart data CSV summary', () => {
   it('summarizes columns, row count, and preview rows', () => {
@@ -87,5 +87,19 @@ describe('chart data captured download filenames', () => {
 
   it('falls back to a generated CSV name when TradingView does not provide one', () => {
     assert.match(sanitizeDownloadFilename(''), /^tradingview_chart_data_\d+\.csv$/);
+  });
+
+  it('uses an explicit output filename before TradingView default names', () => {
+    assert.equal(
+      resolveDownloadFilename({ filename: 'nvda-session', fallback: 'BATS:NVDA, 5.csv' }),
+      'nvda-session.csv'
+    );
+  });
+
+  it('uses TradingView filename when no explicit filename is provided', () => {
+    assert.equal(
+      resolveDownloadFilename({ fallback: 'BATS:NVDA, 5.csv' }),
+      'BATS_NVDA, 5.csv'
+    );
   });
 });

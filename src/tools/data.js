@@ -5,11 +5,12 @@ import * as core from '../core/data.js';
 export function registerDataTools(server) {
   server.tool('chart_download_data', 'Download the current TradingView chart data CSV via the built-in "Download chart data" dialog, then return file path and CSV summary. Includes chart series and visible indicator columns according to TradingView permissions.', {
     downloads_dir: z.string().optional().describe('Download directory to watch (default: ~/Downloads)'),
+    filename: z.string().optional().describe('Output CSV filename. Used with downloads_dir; .csv is added if omitted.'),
     timeout_ms: z.coerce.number().optional().describe('How long to wait for the CSV download in milliseconds (default 30000)'),
     preview_rows: z.coerce.number().optional().describe('Number of CSV data rows to include in the response preview (default 3)'),
     background_attempt: z.boolean().optional().describe('Try DOM clicks plus CSV Blob capture first to avoid bringing TradingView to the foreground (default true). Falls back to native download/mouse events if needed.'),
-  }, async ({ downloads_dir, timeout_ms, preview_rows, background_attempt }) => {
-    try { return jsonResult(await core.downloadChartData({ downloads_dir, timeout_ms, preview_rows, background_attempt })); }
+  }, async ({ downloads_dir, filename, timeout_ms, preview_rows, background_attempt }) => {
+    try { return jsonResult(await core.downloadChartData({ downloads_dir, filename, timeout_ms, preview_rows, background_attempt })); }
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 
