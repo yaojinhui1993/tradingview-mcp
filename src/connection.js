@@ -73,15 +73,7 @@ export async function connect() {
       if (!target) {
         throw new Error('No TradingView chart target found. Is TradingView open with a chart?');
       }
-      targetInfo = target;
-      client = await CDP({ host: CDP_HOST, port: CDP_PORT, target: target.id });
-
-      // Enable required domains
-      await client.Runtime.enable();
-      await client.Page.enable();
-      await client.DOM.enable();
-
-      return client;
+      return connectToTarget(target);
     } catch (err) {
       lastError = err;
       const delay = Math.min(BASE_DELAY * Math.pow(2, attempt), 30000);
@@ -89,6 +81,75 @@ export async function connect() {
     }
   }
   throw new Error(`CDP connection failed after ${MAX_RETRIES} attempts: ${lastError?.message}`);
+}
+
+async function connectToTarget(target) {
+  if (client && targetInfo?.id === target.id) {
+    try {
+      await client.Runtime.evaluate({ expression: '1', returnByValue: true });
+      return client;
+    } catch {
+      client = null;
+      targetInfo = null;
+    }
+  }
+
+  if (client) {
+    try { await client.close(); } catch {}
+    client = null;
+    targetInfo = null;
+  }
+
+  targetInfo = target;
+  client = await CDP({ host: CDP_HOST, port: CDP_PORT, target: target.id });
+
+  // Enable required domains
+  await client.Runtime.enable();
+  await client.Page.enable();
+  await client.DOM.enable();
+
+  rememberTarget(target);
+  return client;
+}
+
+export async function selectTargetById(targetId) {
+  const id = String(targetId || '').trim();
+  if (!id) {
+    throw new Error('TradingView target id is required');
+  }
+
+  const resp = await fetch(`http://${CDP_HOST}:${CDP_PORT}/json/list`);
+  const targets = await resp.json();
+  const target = targets.find(t => t.id === id);
+
+  if (!target) {
+    throw new Error(`TradingView target id not found: ${id}`);
+  }
+
+  if (target.type !== 'page' || !/tradingview\.com\/chart/i.test(target.url)) {
+    throw new Error(`TradingView target id is not a chart tab: ${id}`);
+  }
+
+  await connectToTarget(target);
+  return {
+    id: target.id,
+    title: target.title,
+    url: target.url,
+    chart_id: target.url.match(/\/chart\/([^/?]+)/)?.[1] || null,
+  };
+}
+
+function rememberTarget(target) {
+  try {
+    fs.writeFileSync(ACTIVE_TARGET_FILE, JSON.stringify({
+      id: target.id,
+      chart_id: target.url.match(/\/chart\/([^/?]+)/)?.[1] || null,
+      url: target.url,
+      updated_at: new Date().toISOString(),
+    }));
+  } catch {
+    // Best-effort only; target selection should still work if the cache cannot be written.
+  }
 }
 
 async function findChartTarget() {

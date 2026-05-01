@@ -84,6 +84,7 @@ describe('CLI — help and routing', () => {
     assert.equal(exitCode, 0);
     assert.ok(stdout.includes('--mouse'));
     assert.ok(stdout.includes('--filename'));
+    assert.ok(stdout.includes('--target-id'));
   });
 });
 

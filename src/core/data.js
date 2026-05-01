@@ -1,7 +1,7 @@
 /**
  * Core data access logic.
  */
-import { evaluate, evaluateAsync, getClient, KNOWN_PATHS, safeString } from '../connection.js';
+import { evaluate, evaluateAsync, getClient, KNOWN_PATHS, safeString, selectTargetById } from '../connection.js';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
@@ -706,6 +706,7 @@ async function waitForNativeCsvAfterClick({ clickResult, downloadsDir, timeoutMs
 }
 
 export async function downloadChartData({
+  target_id,
   downloads_dir,
   timeout_ms,
   poll_ms,
@@ -713,6 +714,7 @@ export async function downloadChartData({
   background_attempt,
   filename,
 } = {}) {
+  const selectedTarget = target_id ? await selectTargetById(target_id) : null;
   const options = normalizeDownloadOptions({ background_attempt });
   const downloadsDir = downloads_dir || join(homedir(), 'Downloads');
   const timeoutMs = timeout_ms || DEFAULT_DOWNLOAD_TIMEOUT;
@@ -747,6 +749,8 @@ export async function downloadChartData({
   const summary = summarizeCsvFile(filePath, { preview_rows });
   return {
     ...summary,
+    target_id: selectedTarget?.id,
+    target_chart_id: selectedTarget?.chart_id,
     downloads_dir: downloadsDir,
     ...clickResult,
     source: 'tradingview_download_chart_data_ui',

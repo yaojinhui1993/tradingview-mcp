@@ -31,7 +31,7 @@ Reading your chart:
 - data_get_study_values → get current numeric values from ALL visible indicators (RSI, MACD, BB, EMA, etc.)
 - quote_get → get real-time price snapshot (last, OHLC, volume)
 - data_get_ohlcv → get price bars. ALWAYS pass summary=true unless you need individual bars
-- chart_download_data → use TradingView's Download chart data dialog to save CSV with symbol + indicator columns
+- chart_download_data → use TradingView's Download chart data dialog to save CSV with symbol + indicator columns; pass target_id from tab_list to download a specific tab without switching first
 
 Reading custom Pine indicator output (line.new/label.new/table.new/box.new drawings):
 - data_get_pine_lines → horizontal price levels from custom indicators (deduplicated, sorted)

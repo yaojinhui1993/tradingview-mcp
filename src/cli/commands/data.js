@@ -31,11 +31,13 @@ register('data', {
       options: {
         dir: { type: 'string', short: 'd', description: 'Download directory to watch (default ~/Downloads)' },
         filename: { type: 'string', short: 'o', description: 'Output CSV filename (default from TradingView)' },
+        'target-id': { type: 'string', description: 'TradingView CDP target id to download from (from tv tab list)' },
         timeout: { type: 'string', short: 't', description: 'Timeout in milliseconds (default 30000)' },
         preview: { type: 'string', short: 'p', description: 'Preview rows to return (default 3)' },
         mouse: { type: 'boolean', description: 'Skip background DOM click attempt and use CDP mouse events only' },
       },
       handler: (opts) => core.downloadChartData({
+        target_id: opts['target-id'],
         downloads_dir: opts.dir,
         filename: opts.filename,
         timeout_ms: opts.timeout ? Number(opts.timeout) : undefined,
